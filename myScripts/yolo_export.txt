@@ -1,0 +1,1 @@
+python export.py --weights runs/train/yolo_imp_detect_v22/weights/best.pt runs/train/yolo_imp_detect_v22/weights/last.pt --include onnx
