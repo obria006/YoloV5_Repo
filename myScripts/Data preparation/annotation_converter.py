@@ -34,6 +34,7 @@ class annotationConverter:
         in_dir=in_dir.replace('\\','/')
         img_dir=img_dir.replace('\\','/')
         out_dir=out_dir.replace('\\','/')
+        os.makedirs(out_dir,exist_ok=True)
         assert(os.path.isdir(in_dir)), 'Input annotation directory not found. (%r)' %in_dir
         assert(os.path.isdir(img_dir)), 'Image directory not found. (%r)' %img_dir
         assert(os.path.isdir(out_dir)), 'Output annoation directory not found. (%r)' %out_dir
@@ -272,6 +273,7 @@ class annotationConverter:
                 print('No annotation created because couldnt find and copy image',img_filepath)
 
         else:
+            print(xml_list)
             self.write_yolo_txt(output_path=output_path, xml_list=xml_list)
             print('Saved txt annotation '+output_path,' (No copy image)')
     
@@ -292,9 +294,10 @@ class annotationConverter:
             # For each tuple in the xml_list
             for obj in xml_list:
                 # For each object in the tuple
-                for ele in obj:
+                for i in range(0,len(obj)):
+                    ele = obj[i]
                     # If the object is last in the tuple write a newline
-                    if ele == obj[-1]:
+                    if i == 5:
                         f.write(str(ele)+'\n')
                     # If the object isn't last write a space after
                     else:
@@ -341,10 +344,89 @@ class annotationConverter:
             cv2.imshow('IMAGE',img_resize)
             cv2.waitKey(0)
 
+class InPlaceAnnotationModifier:
+    ''' Modify existing annotations in current location '''
 
+    def __init__(self,dir_to_modify,walk_dir = False):
+        '''
+        Initialize annotaion modifier with directory containing annotations
+        
+        Keyword Arguments:
+        dir_to_modify (str): Path to directory with annotations
+        walk_dir (bool): Indicator whether to walk through subdirectories
+        '''
+        self.dir = dir_to_modify
+        self.walk_dir = walk_dir
 
+    def modify_all_yolo(self,modify_dict):
+        '''
+        Modify variable in all yolo annotations to the same value
+        
+        Keywords Arguments:
+        modify_dict (dict): Dictionary containing keyword value pair
+        '''
+        print("Modfying all labels in "+self.dir)
+        # Assertions for correct arguemtns
+        assert isinstance(modify_dict, dict), "modify_dict argument must be a dictionary instance"
+        for key_name in modify_dict.keys():
+            assert key_name.lower() in ["class","x1","y1","w","h"], 'modify_dict keys must include one or more of the following ([)"class","x1","y1","w","h")'
 
+        # Analyze trajectory and modify
+        if self.walk_dir is True:
+            all_dirs = [dir_contents[0] for dir_contents in os.walk(self.dir)]
+            for ea_dir in all_dirs:
+                dir_files = os.listdir(ea_dir)
+                txt_files = [filename for filename in dir_files if filename[-4:] == '.txt']
+                for ea_file in txt_files:
+                    # Open each file and modify data
+                    with open(os.path.join(ea_dir,ea_file),'r') as f:
+                        data = [float(x) for x in f.readlines()[0].strip().split()]
+                        for key_name in modify_dict.keys():
+                            if key_name.lower() == "class":
+                                data[0] = modify_dict[key_name]
+                            elif key_name.lower() == "x1":
+                                data[1] = modify_dict[key_name]
+                            elif key_name.lower() == "y1":
+                                data[2] = modify_dict[key_name]
+                            elif key_name.lower() == "w":
+                                data[3] = modify_dict[key_name]
+                            elif key_name.lower() == "h":
+                                data[4] = modify_dict[key_name]
+                        # Error handeling if box exceeds image dimensions
+                        _,x1,y1,w,h=data
+                        if x1 - w/2 <=0:
+                            data[1] = w/2 + 1/3072
+                        if x1 + w/2 >= 1:
+                            data[1] = 1 - w/2 - 1/3072
+                        if y1 - h/2 <= 0:
+                            data[2] = h/2 + 1/2048
+                        if y1 + h/2 >= 1:
+                            data[2] = 1 - h/2 - 1/2048
+                        
+                    with open(os.path.join(ea_dir,ea_file),'w') as f:
+                        self.write_list_to_yolo(data=data,f=f)
+        print("... all labels modified complete.")
 
+    
+    def write_list_to_yolo(self,data,f):
+        '''
+        Create a yolo annotation string from the list of data
+        
+        Keyword Arguments:
+        data (list): List containing [[class, x1, y1, w, h],...] to write to yolo file
+        f (file): File object to write data to
+        '''
+        # For each object in the tuple
+        for i in range(0,len(data)):
+            ele = data[i]
+            if i == 0:
+                f.write(str(int(ele))+' ')
+            # If the object is last in the tuple write a newline
+            elif i == 4:
+                f.write(str(round(ele,6))+'\n')
+            # If the object isn't last write a space after
+            else:
+                f.write(str(round(ele,6))+' ')
 
 # # Define mapping between yolo and txt labe
 # YOLO2VOC_mapping = {0:'Impalement',1:'Impalement',2:'Fill',3:'Other',4:'Other',5:'Other',6:'Other'}
@@ -356,14 +438,31 @@ class annotationConverter:
 #                         img_dir = "D:/Dumitriu_Detection/Injection Videos/Image_Sequences_8bitJPEG",
 #                         copy_imgs = True)
 
-# Define mapping between yolo and txt labe
-VOC2YOLO_mapping = {'Impalement':0,'Miss':1}
+
+# Define mapping between yolo and txt label
+VOC2YOLO_mapping = {'Tip':0}
 # Instantiate annotation converter
 A = annotationConverter(class2num_label_mapping=VOC2YOLO_mapping)
 # Convert all annotations in directory
-A.process_XMLdirectory(in_dir = "D:/Documents/TensorFlow2/workspace/ImpDetectYolo/images/train",
-                        out_dir = "D:/Documents/TensorFlow2/workspace/ImpDetectYolo/labels/train",
-                        img_dir = "D:/Documents/TensorFlow2/workspace/ImpDetectYolo/images/train",
+A.process_XMLdirectory(in_dir = "D:/Documents/TensorFlow2/workspace/TipDetectYolo/images/train",
+                        out_dir = "D:/Documents/TensorFlow2/workspace/TipDetectYolo/labels/train",
+                        img_dir = "D:/Documents/TensorFlow2/workspace/TipDetectYolo/images/train",
                         copy_imgs = False)
-# A.test_txt_annot(txt_dir = "D:/Documents/TensorFlow2/workspace/ImpDetectYolo/annot_convert_test",
-#                  img_dir = "D:/Documents/TensorFlow2/workspace/ImpDetectYolo/annot_convert_test")
+A.process_XMLdirectory(in_dir = "D:/Documents/TensorFlow2/workspace/TipDetectYolo/images/val",
+                        out_dir = "D:/Documents/TensorFlow2/workspace/TipDetectYolo/labels/val",
+                        img_dir = "D:/Documents/TensorFlow2/workspace/TipDetectYolo/images/val",
+                        copy_imgs = False)
+A.process_XMLdirectory(in_dir = "D:/Documents/TensorFlow2/workspace/TipDetectYolo/images/test",
+                        out_dir = "D:/Documents/TensorFlow2/workspace/TipDetectYolo/labels/test",
+                        img_dir = "D:/Documents/TensorFlow2/workspace/TipDetectYolo/images/test",
+                        copy_imgs = False)
+# # A.test_txt_annot(txt_dir = "D:/Documents/TensorFlow2/workspace/ImpDetectYolo/annot_convert_test",
+# #                  img_dir = "D:/Documents/TensorFlow2/workspace/ImpDetectYolo/annot_convert_test")
+
+
+C = InPlaceAnnotationModifier(dir_to_modify="D:/Documents/TensorFlow2/workspace/TipDetectYolo/labels",walk_dir=True)
+box_size = 20
+mod_dict = {"class":0,"w":box_size/3072,"h":box_size/2048}
+C.modify_all_yolo(mod_dict)
+
+

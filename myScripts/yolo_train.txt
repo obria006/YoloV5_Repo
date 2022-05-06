@@ -1,1 +1,1 @@
-python train.py --img 640 --cfg yolov5s.yaml --hyp hyp.scratch.yaml --batch 32 --epochs 7 --data imp_detect_v2.yaml --weights yolov5s.pt --name yolo_imp_detect_v2 --evolve
+python train.py --img 640 --cfg yolov5s.yaml --hyp hyp.scratch.yaml --batch 32 --epochs 300 --data tip_detect_v0.yaml --weights yolov5s.pt --name yolo_tip_detect_v0

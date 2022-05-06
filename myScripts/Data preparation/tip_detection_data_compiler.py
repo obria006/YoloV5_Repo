@@ -47,8 +47,8 @@ class GUIWindow(tk.Frame):
         self.update_display()
 
     def init_vars(self):
-        self.local_clicked_coords = [] # Clicked coordinates in local mosaic
         self.fully_defined_clicked_indices = [] # Position of clicked indices [[mosaic_num, local_index]]
+        self.clicked_tip_indices_and_coords = [] # Position of clicked indices [[mosaic_num, local_index, local_clicked_coord]]
         self.global_clicked_indices = [] # Index of clicked image in global roi images 
         self.pix_per_img_x = 100 # width of each img tile in mosiac
         self.pix_per_img_y = 100 # height of each img tile in mosiac
@@ -62,9 +62,11 @@ class GUIWindow(tk.Frame):
         self.cell_u = 0 # upper cell number
         self.mosaic_N = 0 # Total number of mosaic
         self.mosaic_num = 0 # Current mosaic number
+        self.cursor_pos = None # Postion of cursor in canvas
         self.df_read = None # Pandas dataframe for reading indata
         self.df_associate = None # Pandas dataframe for compiled data
         self.df_xml = None # Pandas dataframe for xml annotation
+        self.df_tip_coords_yolo = None # Pandas dataframe for yolo tip coords
         self.time_str = None # time string for data
         self.date_str = None # date string for saved data
 
@@ -83,10 +85,11 @@ class GUIWindow(tk.Frame):
         ''' Fill frames with widgets '''
         # Display canvas
         self.canvas_img = np.zeros((self.disp_h,self.disp_w,3),dtype=np.uint8)
-        self.canvas_display = tk.Canvas(master=self.frame_display, width=self.disp_w, height=self.disp_h)
+        self.canvas_display = tk.Canvas(master=self.frame_display, width=self.disp_w, height=self.disp_h,cursor="none")
         self.canvas_display.grid(row=0,column=0,sticky=tk.NSEW)
-        self.canvas_display.bind("<Button 1>", self.add_img_to_list)
+        self.canvas_display.bind("<Button 1>", self.img_coord_from_clicked_coord)
         self.canvas_display.bind("<Button 3>", self.rm_img_from_list)
+        self.canvas_display.bind("<Motion>", self.mouse_motion)
 
         # DATA ASSOCIATION WIDGETS
         # Read in data (score varied success rate text files)
@@ -98,9 +101,9 @@ class GUIWindow(tk.Frame):
         # Read in data (score varied success rate text files)
         self.process_data_button = tk.Button(master=self.frame_aux1,text='Process Data', command=self.process_data)
         self.process_data_button.grid(row=2,column=0,padx=1,pady=2,sticky=tk.EW)
-        self.data_type_dict = {"Impale":True, "Miss":False}
+        self.data_type_dict = {"Impale":1, "Miss":0,"All":-1}
         self.data_type_var = tk.StringVar()
-        self.data_type_var.set("Impale")
+        self.data_type_var.set("All")
         self.data_type_menu = tk.OptionMenu(self.frame_aux1,self.data_type_var,*self.data_type_dict,command=self.reset_clicked_indices)
         self.data_type_menu.grid(row=2,column=1,padx=1,pady=2,sticky=tk.EW)
         # Read in data (score varied success rate text files)
@@ -109,6 +112,9 @@ class GUIWindow(tk.Frame):
         # Move and annotate data
         self.copy_annotate_button = tk.Button(master=self.frame_aux1,text='Copy/Annotate Data', command=self.copy_annotate_data)
         self.copy_annotate_button.grid(row=4,column=0,padx=1,pady=2,columnspan=2,sticky=tk.EW)
+        # Move and annotate data
+        self.show_tip_button = tk.Button(master=self.frame_aux1,text='Show Tips', command=self.show_tip)
+        self.show_tip_button.grid(row=5,column=0,padx=1,pady=2,columnspan=2,sticky=tk.EW)
 
         # DATA EVALUATION WIDGETS
         # Increment/decrement mosaic
@@ -164,12 +170,12 @@ class GUIWindow(tk.Frame):
     def process_data(self):
         ''' Process data using mosaic dir '''
 
-        self.local_clicked_coords = [] # Clicked coordinates in local mosaic
         self.fully_defined_clicked_indices = [] # Position of clicked indices [[mosaic_num, local_index]]
+        self.clicked_tip_indices_and_coords = [] # Position of clicked indices [[mosaic_num, local_index, local_clicked_coord]]
         self.global_clicked_indices = [] # Index of clicked image in global roi images 
 
         # Use IDC to compile ROI images of data
-        impale_bool = self.data_type_dict[self.data_type_var.get()]
+        impale_indicator = self.data_type_dict[self.data_type_var.get()]
         inj_data_path = Path(self.IDC.inj_data_dir)
         pre_fdir = inj_data_path.parent.absolute()
         filetypes = [("All Files","*.*"),("CSV Files","*.csv"),("Text Documents","*.txt")]
@@ -177,7 +183,7 @@ class GUIWindow(tk.Frame):
         self.date_str = filepath[filepath.rfind("_Time")-10:filepath.rfind("_Time")]
         self.time_str = filepath[filepath.rfind("_Time")+5:-4]
         if filepath != '':
-            self.df_associate, self.df_xml, self.ROI_imgs = self.IDC.evaluate_data(filepath=filepath,impale=impale_bool,mosaic_img_x=self.pix_per_img_x,mosaic_img_y=self.pix_per_img_y)
+            self.df_associate, self.df_xml, self.ROI_imgs, self.ROI_bb_scale = self.IDC.evaluate_data(filepath=filepath,impale=impale_indicator,img_num=1,mosaic_img_x=self.pix_per_img_x,mosaic_img_y=self.pix_per_img_y)
             print(self.df_xml)
         
         if self.df_xml is not None:
@@ -197,6 +203,22 @@ class GUIWindow(tk.Frame):
     def copy_annotate_data(self):
         ''' Move and annotate data '''
         self.IDC.copy_data_and_annotate(df_xml=self.df_xml)
+    
+    def show_tip(self):
+        ''' SHow the tip from the xml file'''
+        if self.df_xml is not None:
+            for i in range(0,len(self.df_xml.index)):
+                img_name = self.df_xml.iloc[i]['ImgName']
+                date_str = self.df_xml.iloc[i]['Date']
+                X1 = self.df_xml.iloc[i]['X1']
+                Y1 = self.df_xml.iloc[i]['Y1']
+                if img_name is not None:
+                    imp_img_dir = os.path.join(self.IDC.img_dir, date_str)
+                    img_src_path = os.path.join(imp_img_dir,img_name)
+                    im = cv2.imread(img_src_path)
+                    cv2.circle(im,(X1,Y1),10,(0,0,255),-1)
+                    cv2.imshow('TIP',cv2.resize(im,(750,500)))
+                    cv2.cv2.waitKey(10)
 
     def create_mosaic_images(self,i_stack,outsize_x,outsize_y):
         '''
@@ -251,6 +273,9 @@ class GUIWindow(tk.Frame):
         # df_xml = df_xml.drop(labels=rem_imgs)
         # ROI_imgs_trim = np.delete(ROI_imgs,rem_imgs,axis=2)
         print(self.global_clicked_indices)
+        df_associate_clicked_tip = self.df_associate.iloc[self.global_clicked_indices]
+        df_xml_clicked_tip = self.df_xml.iloc[self.global_clicked_indices]
+
         df_associate_elim = self.df_associate.iloc[self.global_clicked_indices]
         df_associate_retain = self.df_associate.drop(labels=self.global_clicked_indices)
         df_xml_save = self.df_xml.drop(labels=self.global_clicked_indices)
@@ -258,23 +283,23 @@ class GUIWindow(tk.Frame):
         # File paths to save
         inj_data_path = Path(self.IDC.inj_data_dir)
         pre_fdir = inj_data_path.parent.absolute()
-        retain_pre_fname = "associated_data_retained_"+self.data_type_var.get()
-        elim_pre_fname = "associated_data_eliminated_"+self.data_type_var.get()
+        retain_pre_fname = "tip_data_"+self.data_type_var.get()
+        retain_xml_pre_fname = "XML_tip_data_"+self.data_type_var.get()
         retain_fpath = self.save_to_file(pre_fdir=pre_fdir,pre_fname=retain_pre_fname,time_str=self.time_str,date_str=self.date_str,ext='.csv')
-        elim_fpath = self.save_to_file(pre_fdir=pre_fdir,pre_fname=elim_pre_fname,time_str=self.time_str,date_str=self.date_str,ext='.csv')
+        retain_xml_fpath = self.save_to_file(pre_fdir=pre_fdir,pre_fname=retain_xml_pre_fname,time_str=self.time_str,date_str=self.date_str,ext='.csv')
 
         # Write data to file
         if retain_fpath != '':
-            _ = df_associate_retain.to_csv(retain_fpath)
+            _ = df_associate_clicked_tip.to_csv(retain_fpath)
             print('Saved new csv of retained data',retain_fpath)
-        if elim_fpath != '':
-            _ = df_associate_elim.to_csv(elim_fpath)
-            print('Saved new csv of retained data',elim_fpath)
+        if retain_xml_fpath != '':
+            _ = df_xml_clicked_tip.to_csv(retain_xml_fpath)
+            print('Saved new csv of retained XML data',retain_xml_fpath)
 
     def reset_clicked_indices(self,option_val):
         self.df_associate = None
-        self.local_clicked_coords = [] # Clicked coordinates in local mosaic
         self.fully_defined_clicked_indices = [] # Position of clicked indices [[mosaic_num, local_index]]
+        self.clicked_tip_indices_and_coords = [] # Position of clicked indices [[mosaic_num, local_index, local_clicked_coord]]
         self.global_clicked_indices = [] # Index of clicked image in global roi images 
 
     def save_to_file(self,pre_fdir=None,pre_fname=None,pre_fpath=None,time_str=None,date_str=None,ext='*.*'):
@@ -310,32 +335,54 @@ class GUIWindow(tk.Frame):
         
         return filepath
 
-    def add_img_to_list(self, event):
+    def mosaic_coord_to_orig_img_coord(self,global_img_index,local_coord):
+        ''' Convert the local clicked coord in the mosaic to the coord in the original image'''
+        (x1,y1,x2,y2,hpadx,hpady,downscale_x,downscale_y) = self.ROI_bb_scale[global_img_index,:].tolist()
+        orig_ROI_coord = (int(round(local_coord[0]*1/downscale_x -hpadx)),int(round(local_coord[1]*1/downscale_y-hpady)))
+        orig_clicked_coord = ((int(x1+orig_ROI_coord[0])),int(y1+orig_ROI_coord[1]))
+        return orig_clicked_coord
+
+    def img_coord_from_clicked_coord(self, event):
         ''' add clicked image to list '''
         coord = [event.x, event.y]
         mosaic_index = self.mosaic_num - 1
-        local_img_index, center_coord = self.clicked_coord_to_box(coord)
+        local_img_index, center_coord, local_coord = self.clicked_coord_to_box(coord)
         fully_defined_indices = (int(mosaic_index), int(local_img_index))
         if fully_defined_indices not in self.fully_defined_clicked_indices and self.mosaic_N > 0:
-            self.local_clicked_coords.append(center_coord)
             self.fully_defined_clicked_indices.append((mosaic_index,local_img_index))
+            self.clicked_tip_indices_and_coords.append((mosaic_index,local_img_index,local_coord))
             global_img_index = self.local_to_global(local_index=local_img_index, mosaic_index=mosaic_index,imgs_per_mosaic=self.imgs_per_mosaic)
             self.global_clicked_indices.append(global_img_index)
-        # print('COORDS: ',self.local_clicked_coords,'\nFDINDS: ',self.fully_defined_clicked_indices,'\nG INDS: ',self.global_clicked_indices)
+            X1, Y1 = self.mosaic_coord_to_orig_img_coord(global_img_index=global_img_index,local_coord=local_coord)
+            # img_name = self.df_xml.iloc[global_img_index]['ImgName']
+            # date_str = self.df_xml.iloc[global_img_index]['Date']
+            # if img_name is not None:
+            #     imp_img_dir = os.path.join(self.IDC.img_dir, date_str)
+            #     img_src_path = os.path.join(imp_img_dir,img_name)
+            #     im = cv2.imread(img_src_path)
+            #     cv2.circle(im,(X1,Y1),10,(255,255,0),-1)
+            #     cv2.imshow('TIP',cv2.resize(im,(750,500)))
+            #     cv2.cv2.waitKey(0)
+            self.df_xml.at[global_img_index,"X1"] = X1
+            self.df_xml.at[global_img_index,"X2"] = X1
+            self.df_xml.at[global_img_index,"Y1"] = Y1
+            self.df_xml.at[global_img_index,"Y2"] = Y1
+
+        elif fully_defined_indices in self.fully_defined_clicked_indices and self.mosaic_N > 0:
+            ind = self.fully_defined_clicked_indices.index(fully_defined_indices)
+            self.clicked_tip_indices_and_coords[ind] = (mosaic_index,local_img_index,local_coord)
     
     def rm_img_from_list(self, event):
         ''' remove clicked image from list '''
         coord = [event.x, event.y]
         mosaic_index = self.mosaic_num - 1
-        local_img_index, center_coord = self.clicked_coord_to_box(coord)
+        local_img_index, center_coord, _ = self.clicked_coord_to_box(coord)
         fully_defined_indices = (int(mosaic_index), int(local_img_index))
         if fully_defined_indices in self.fully_defined_clicked_indices and self.mosaic_N > 0:
-            coord_index_to_remove = self.local_clicked_coords.index(center_coord)
             global_index_to_remove = self.fully_defined_clicked_indices.index(fully_defined_indices)
-            self.local_clicked_coords.pop(coord_index_to_remove)
             self.fully_defined_clicked_indices.pop(global_index_to_remove)
+            self.clicked_tip_indices_and_coords.pop(global_index_to_remove)
             self.global_clicked_indices.pop(global_index_to_remove)
-        # print('COORDS: ',self.local_clicked_coords,'\nFDINDS: ',self.fully_defined_clicked_indices,'\nG INDS: ',self.global_clicked_indices)
 
     def local_to_global(self, local_index, mosaic_index, imgs_per_mosaic):
         ''' transalte the local index in the mosaic to a global index'''
@@ -350,29 +397,25 @@ class GUIWindow(tk.Frame):
             local_index = global_index % ((mosaic_index+1)*imgs_per_mosaic)
         return local_index
 
-    def local_to_coord(self,local):
+    def local_to_coord(self,local,coord=None):
         ''' translate local index to center coordinate '''
         row_num = math.floor(local/self.imgs_per_mosaic_x)
         col_num = local - row_num*self.imgs_per_mosaic_x
         # Center coordinate of clicked img tile
-        coord_center = (int(col_num*self.pix_per_img_x + self.pix_per_img_x/2), int(row_num*self.pix_per_img_y + self.pix_per_img_y/2))
-        return coord_center
+        if coord is None:
+            coord_ret = (int(col_num*self.pix_per_img_x + self.pix_per_img_x/2), int(row_num*self.pix_per_img_y + self.pix_per_img_y/2))
+        else:
+            coord_ret = (int(col_num*self.pix_per_img_x + coord[0]), int(row_num*self.pix_per_img_y + coord[1]))
+        return coord_ret
 
     def refresh_local_clicks(self):
         ''' recompute the already clicked local indices '''
-        for indices in self.fully_defined_clicked_indices:
+        for indices in self.clicked_tip_indices_and_coords:
             mosaic_index = indices[0]
             local_index = indices[1]
+            local_coord = indices[2]
             if mosaic_index == (self.mosaic_num - 1):
-                coord = self.local_to_coord(local_index)
-                self.local_clicked_coords.append(coord)
-
-        # for global_index in self.global_clicked_indices:
-        #     mosaic_index = self.mosaic_num - 1
-        #     local_index = self.global_to_local(global_index=global_index,mosaic_index=mosaic_index,imgs_per_mosaic=self.imgs_per_mosaic)
-        #     if local_index is not None:
-        #         coord = self.local_to_coord(local_index)
-        #         self.local_clicked_coords.append(coord)
+                coord = self.local_to_coord(local_index,coord=local_coord)
 
     def clicked_coord_to_box(self, coord):
         ''' get image tile/box number of clicked coord '''
@@ -382,10 +425,12 @@ class GUIWindow(tk.Frame):
         row_num = math.floor(coord[1]/ self.pix_per_img_y)
         # Image number in the current mosaic
         local_img_index = row_num*self.imgs_per_mosaic_x + col_num
+        # Local coordiante of clicked img_tile
+        coord_local = (int(coord[0] - col_num*self.pix_per_img_x), int(coord[1] - row_num*self.pix_per_img_y))
         # Center coordinate of clicked img tile
         coord_center = (int(col_num*self.pix_per_img_x + self.pix_per_img_x/2), int(row_num*self.pix_per_img_y + self.pix_per_img_y/2))
         
-        return local_img_index, coord_center
+        return local_img_index, coord_center, coord_local
 
     def draw_x(self,x_c,y_c,width,color='red'):
         ''' Draw x on canvas '''
@@ -396,11 +441,26 @@ class GUIWindow(tk.Frame):
         self.canvas_display.create_line(x_left,y_top,x_right,y_bot,fill=color,width=3)
         self.canvas_display.create_line(x_left,y_bot,x_right,y_top,fill=color,width=3)
 
+    def draw_cursor(self,x_c,y_c,color='grey50'):
+        ''' Draw x on canvas '''
+        self.canvas_display.create_line(x_c,max(y_c-100,0),x_c,max(y_c-2,0),fill=color,width=1)
+        self.canvas_display.create_line(x_c,min(y_c+2,self.disp_h),x_c,min(y_c+100,self.disp_h),fill=color,width=1)
+        self.canvas_display.create_line(max(x_c-100,0),y_c,max(x_c-2,0),y_c,fill=color,width=1)
+        self.canvas_display.create_line(min(x_c+2,self.disp_w),y_c,min(x_c+100,self.disp_w),y_c,fill=color,width=1)
+        # self.canvas_display.create_line(x_c,0,x_c,self.disp_h,fill=color,width=1)
+        # self.canvas_display.create_line(0,y_c,self.disp_w,y_c,fill=color,width=1)
+
+    def draw_tip(self,x_c,y_c,color='magenta'):
+        ''' Draw tip cross on canvas'''
+        self.canvas_display.create_line(x_c,y_c-10,x_c,y_c-2,fill=color,width=1)
+        self.canvas_display.create_line(x_c,y_c+2,x_c,y_c+10,fill=color,width=1)
+        self.canvas_display.create_line(x_c-10,y_c,x_c-2,y_c,fill=color,width=1)
+        self.canvas_display.create_line(x_c+2,y_c,x_c+10,y_c,fill=color,width=1)
+
     def next_mosaic(self):
         ''' show next mosaic image '''
         # Not on the last mosaic (more mosaics left)
         if self.mosaic_num < self.mosaic_N:
-            self.local_clicked_coords = []
             # Set cell and mosaic indicators
             self.mosaic_num += 1
             self.mosaic_num_var.set(str(self.mosaic_num) + ' / ' + str(self.mosaic_N))
@@ -414,7 +474,6 @@ class GUIWindow(tk.Frame):
         ''' show previous mosaic image '''
         # Not on the first mosaic (more mosaics left)
         if self.mosaic_num > 0:
-            self.local_clicked_coords = []
             # Set cell and mosaic indicators
             self.mosaic_num -= 1
             self.mosaic_num_var.set(str(self.mosaic_num) + ' / ' + str(self.mosaic_N))
@@ -424,14 +483,23 @@ class GUIWindow(tk.Frame):
             self.canvas_img = self.mosaic_imgs[:,:,self.mosaic_num-1]
             self.refresh_local_clicks()
 
+    def mouse_motion(self,event):
+        self.cursor_pos = (event.x, event.y)
+
     def update_display(self):
         self.canvas_display.delete("all")
         display_img = PIL.Image.fromarray(self.canvas_img)
         self.display_img_tk = PIL.ImageTk.PhotoImage(image=display_img)
         self.canvas_display.create_image(0, 0, image=self.display_img_tk, anchor=tk.N+tk.W)
-        for coords in self.local_clicked_coords:
-            self.draw_x(x_c=coords[0],y_c=coords[1],width=self.pix_per_img_x)
-        self.refresh_display = self.frame_display.after(100,self.update_display)
+        for indices in self.clicked_tip_indices_and_coords:
+            mosaic_ind, local_ind, local_coord = indices
+            if mosaic_ind == self.mosaic_num-1:
+                coord = self.local_to_coord(local=local_ind,coord=local_coord)
+                self.draw_tip(coord[0],coord[1])
+        if self.cursor_pos is not None:
+            x_c, y_c = self.cursor_pos
+            self.draw_cursor(x_c,y_c,color="Springgreen2")
+        self.refresh_display = self.frame_display.after(10,self.update_display)
 
 
 class ImpDetCompiler:
@@ -609,14 +677,15 @@ class ImpDetCompiler:
         
         return df_associate
 
-    def evaluate_data(self, filepath=None, df_associate=None, impale = True,mosaic_img_x =100, mosaic_img_y=100):
+    def evaluate_data(self, filepath=None, df_associate=None, impale = -1, img_num = 3, mosaic_img_x =100, mosaic_img_y=100):
         '''
         Compile all data and segment/remove data if needed.
         
         Keyword Arguments:
         filepath: String to csv file containing associated data from associate_cell_to_images
         df_associate: Pandas dataframe containing input data frame w/ associated data columns (like cell num)
-        impale: Boolean to indicate whether compile impaled or missed cells
+        impale: Int to indicate whether compile impaled or missed cells
+        img_num: Number of impalment image to use (1 should be before inject)
         mosaic_img_x: Pixel width of each tile in mosaic image
         mosaic_img_y: Pixel height of each tile in mosaic image 
         '''
@@ -633,15 +702,19 @@ class ImpDetCompiler:
             df = df_associate
 
         # Read in only data that has been successfully injected and reset indices
-        if impale == True:
+        if impale == 1:
             success_indicator = 1
-        else:
+            df = df.loc[df['Success'] == success_indicator]
+        elif impale == 0:
             success_indicator = 0
-        df = df.loc[df['Success'] == success_indicator]
+            df = df.loc[df['Success'] == success_indicator]
+        else:
+            pass # Use whole data frame (impaled and missed)
         df = df.reset_index()
 
         # Init numpy array for mosaic of images
         ROI_imgs = np.zeros([mosaic_img_y,mosaic_img_x,len(df.index)],dtype=np.uint8)
+        ROI_bb_scale = -1*np.ones((len(df.index),8)) #[[x1 y1 x2 y2 padx pady downscalex, downscaley], [x1 y1 x2 y2 padx pady downscalex downscale y],...]
         
         # Init list to add to dataframe for xml
         df_xml_column_names = ['Date','ImgName','Width','Height','Depth','Class','X1','X2','Y1','Y2']
@@ -659,7 +732,8 @@ class ImpDetCompiler:
             # Path to directory containing injection images for this row/cell's date
             imp_img_dir = os.path.join(self.img_dir, date_str)
             # Compile all image names that correspond to the third image of the specific injection
-            cell_imp_imgs = [f for f in os.listdir(imp_img_dir) if 'Cell'+str(cell_num).zfill(3)+'_003' in f]
+            img_num_str = str(img_num).zfill(3)
+            cell_imp_imgs = [f for f in os.listdir(imp_img_dir) if 'Cell'+str(cell_num).zfill(3)+'_'+img_num_str in f]
             if cell_imp_imgs != []:
                 # Read in the image
                 print('"\033[F"Finished processing image #... '+str(ind)) 
@@ -672,25 +746,38 @@ class ImpDetCompiler:
                     depth = 1
                 else:
                     depth = i.shape[2]
-                if row['Success'] == 1:
-                    class_name = "Impalement"
-                else:
-                    class_name = "Miss"
+                class_name = "Tip"
                 #['ImgSrcPath','Width','Height','Depth','Class','X1','X2','Y1','Y2']
                 df_xml_list.append([date_str,cell_imp_imgs[0],ix,iy,depth,class_name,x1,x2,y1,y2])
                 # Extract ROI with 50 pixels beyond each side of BB for max size of 300 by 300
-                i = self.pad_ROI(i,x1,x2,y1,y2,50,300,300)
+                i, bb, pad = self.pad_ROI(i,x1,x2,y1,y2,50,300,300)
                 # Downsize ROI to mosaic tile size and add to numpy array for mosaic iamge
                 ir = cv2.resize(src=i,dsize=(mosaic_img_x, mosaic_img_y),interpolation=cv2.INTER_AREA)
+                scale_x = mosaic_img_x/ i.shape[1]
+                scale_y = mosaic_img_y/ i.shape[0]
                 ROI_imgs[:,:,ind] = ir
+                bb_array = np.array(bb).reshape(-1)
+                pad_array = np.array(pad).reshape(-1)
+                scale_array = np.array((scale_x,scale_y)).reshape(-1)
+                ROI_bb_scale[ind,:] = np.concatenate((bb_array,pad_array,scale_array))
             else:
                 #['ImgSrcPath','Width','Height','Depth','Class','X1','X2','Y1','Y2']
                 df_xml_list.append([None,None, None, None, None, None,  None, None, None, None])
         # Create data frame from df xml data
         df_xml = pd.DataFrame(df_xml_list,columns=df_xml_column_names)
         df_associate = df
+        # Overwrite xml file if it exists
+        fpath2 = filepath.replace('\\', '/')
+        fname = fpath2[fpath2.rfind('/')+1:]
+        xml_fname = "XML_"+fname
+        date_time_ID = fpath2[fpath2.rfind("_Time")-10:]
+        dir_files = os.listdir(base_dir)
+        for f in dir_files:
+            if xml_fname in f:
+                df_xml = pd.read_csv(os.path.join(base_dir,f))
+                print("OVERWRITE XML WITH "+xml_fname)
 
-        return df_associate, df_xml, ROI_imgs
+        return df_associate, df_xml, ROI_imgs, ROI_bb_scale
 
     def copy_data_and_annotate(self,df_xml):
         for ind,row in df_xml.iterrows():
@@ -757,26 +844,41 @@ class ImpDetCompiler:
 
         # Compress or pad y axis to desired size
         if i_ROIy > ysize:
+            y1 = y1 + int((i_ROIy-ysize)/2) # actual y1 is contracted slightly towards center of ROI
+            y2 = y2 - int((i_ROIy-ysize)/2) # actual y1 is contracted slightly towards center of ROI
             i_ROI = i_ROI[int(i_ROIy/2 - ysize/2):int(i_ROIy/2 + ysize/2),:]
+            half_pady = 0
         elif i_ROIy < ysize:
             i0 = np.zeros([ysize,i_ROIx],dtype=np.uint8)
             i0[int(ysize/2 - i_ROIy/2):int(ysize/2 + i_ROIy/2),:] = i_ROI
             i_ROI = i0
+            half_pady = int(round((ysize - i_ROIy)/2))
+        else:
+            half_pady=0
 
         # Compress or pad x axis to desired size
         if i_ROIx > xsize:
+            x1 = x1 + int((i_ROIx-xsize)/2) # actual x1 is contracted slightly towards center of ROI
+            x2 = x2 - int((i_ROIx-xsize)/2) # actual x1 is contracted slightly towards center of ROI
             i_ROI = i_ROI[:,int(i_ROIx/2 - xsize/2):int(i_ROIx/2 + xsize/2)]
+            half_padx = 0
         elif i_ROIx < xsize:
             i0 = np.zeros([ysize,xsize],dtype=np.uint8)
             i0[:,int(xsize/2 - i_ROIx/2):int(xsize/2 + i_ROIx/2)] = i_ROI
             i_ROI = i0
+            half_padx = int(round((xsize - i_ROIx)/2))
+        else:
+            half_padx=0
 
-        return i_ROI 
+
+        bb = (x1, y1, x2, y2)
+        pad = (half_padx, half_pady)
+        return i_ROI, bb, pad
 
 root = tk.Tk()
 app = GUIWindow(master=root,
                 img_dir="E:/My Drive/Graduate/BSBRL Research/Robotics for Spat Trans/Results/Pictures/EPI Cells",
                 img_stack_dir="E:/My Drive/Graduate/BSBRL Research/Robotics for Spat Trans/Results/Pictures/Image Stacks/EPI",
                 inj_data_dir="E:/My Drive/Graduate/BSBRL Research/Robotics for Spat Trans/Results/Data Association/txt score files",
-                ml_image_dir = "D:/Documents/TensorFlow2/workspace/ImpDetectYolo/images")
+                ml_image_dir = "D:/Documents/TensorFlow2/workspace/TipDetectYolo/images")
 app.mainloop()

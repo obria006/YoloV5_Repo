@@ -102,6 +102,7 @@ class DataPrepper:
         # Intersect images and annotations to find common elements (only images that have been annotated)
         image_names = [f[:f.find(".")] for f in images]
         annot_names = [a[:a.find(".")] for a in annots]
+        print(annot_names)
         image_annot_intersect = list(set(image_names).intersection(annot_names))
 
         # Modify images and annotations list to only include images that have been annotated
@@ -482,4 +483,4 @@ class DataPrepper:
 
 P = DataPrepper()
 # Split the data into test/train
-P.partition_data(source="D:/Documents/TensorFlow2/workspace/ImpDetectYolo/images",dest="D:/Documents/TensorFlow2/workspace/ImpDetectYolo/images",test_ratio=0.1,val_ratio=0.1,copy_data=False)
+P.partition_data(source="D:/Documents/TensorFlow2/workspace/TipDetectYolo/images",dest="D:/Documents/TensorFlow2/workspace/TipDetectYolo/images",test_ratio=0.1,val_ratio=0.1,copy_data=False)

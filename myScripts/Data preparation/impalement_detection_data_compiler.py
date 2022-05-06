@@ -136,6 +136,16 @@ class GUIWindow(tk.Frame):
         self.df_read = self.IDC.read_injection_data()
         print('... read data done!')
 
+        # Ask to save the file
+        inj_data_path = Path(self.IDC.inj_data_dir)
+        pre_fdir = inj_data_path.parent.absolute()
+        fpath =self.save_to_file(pre_fdir=pre_fdir,pre_fname="read_data",ext='.csv')
+        print(fpath)
+
+        if fpath is not None and fpath != [] and fpath != '':
+            _ = self.df_read.to_csv(fpath)
+            print('Saved new csv of associated data',fpath)
+
     def associate_data(self):
         ''' Associate across different data types using impale detect compiler '''
         print('Using IDC to associate data...')
@@ -147,8 +157,9 @@ class GUIWindow(tk.Frame):
         pre_fdir = inj_data_path.parent.absolute()
         fpath =self.save_to_file(pre_fdir=pre_fdir,pre_fname="associated_data",ext='.csv')
 
-        _ = self.df_associate.to_csv(fpath)
-        print('Saved new csv of associated data',fpath)
+        if fpath is not None and fpath != [] and fpath != '':
+            _ = self.df_associate.to_csv(fpath)
+            print('Saved new csv of associated data',fpath)
 
     def process_data(self):
         ''' Process data using mosaic dir '''
@@ -484,8 +495,29 @@ class ImpDetCompiler:
             # Append text file data to dataframe to return
             df_cell = pd.concat([df_cell,data])
         print('Read in text files. Number of files:',len(txt_files))
-        
+
         return df_cell
+
+        # df_session = pd.DataFrame()
+        # sess_dir = "E:/My Drive/Graduate/BSBRL Research/Robotics for Spat Trans/Results/Injection Trials/Individual Trials"
+        # sess_files = [a for a in os.listdir(sess_dir) if re.search(r'([a-zA-Z0-9\s_\\.\-\(\):])+(?i)(.csv)$', a)]
+        # print('Reading in '+str(len(sess_files))+' session files.')
+        # for s in sess_files:
+        #     datestr = s[:s.rfind("_")]
+        #     datetime_date = datetime.strptime(datestr,"%m-%d-%Y")
+        #     session_filepath = os.path.join(sess_dir,s)
+        #     if datetime_date >= datetime.strptime("12-13-2021","%m-%d-%Y"):
+        #         session_col_remove = ["Unnamed: 0","Date","Vid Name","Speed","Speed Travel","Speed Retract","Speed Poke","Back Pressure","Pressure","Duration","D offset","Maybe","Success Cells","Maybe Cells","Subs. Pipette","ML","Poke","Cut","Purge","Hyst. Comp.","Buzz Dur","Clogged","Include Data", "Note"]
+        #         sess = pd.read_csv(session_filepath)
+        #         sess = sess.drop(columns=session_col_remove)
+        #         sess = sess.rename(columns = {"Success":"Success N"})
+        #         print(sess)
+        #         sess['Date'] = datetime.strftime(datetime_date,"%Y-%m-%d")
+        #         df_session=pd.concat([df_session,sess])
+        # df_test = pd.merge(df_cell,df_session,how="inner",on=["Date","Time"])
+        # print('Session files done')
+        
+        # return df_test
 
     def associate_cell_to_image(self,df_imp,save_data_to_csv=True):
         '''

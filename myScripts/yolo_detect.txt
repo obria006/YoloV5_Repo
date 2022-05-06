@@ -1,1 +1,1 @@
-python detect.py --weights runs/train/yolo_imp_detect_v2m/weights/best.pt --source "D:/Documents/TensorFlow2/workspace/ImpDetectYolo/images/test2" --name yolo_imp_detect_v2m
+python detect.py --weights runs/train/yolo_tip_focus_v0/weights/best.pt --source "D:/Documents/TensorFlow2/workspace/TipFocusYolo/images/test" --name yolo_tip_focus_v0
